@@ -3,7 +3,7 @@ import { LayoutDashboard, Wallet, TrendingUp, TrendingDown, Plus, Moon, Sun, Dol
 import { TransactionProvider, useTransactions } from './context/TransactionContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, Button } from './components/ui/Components';
-import { ChartsSection } from './components/ChartsSection';
+import { IncomeExpenseChart } from './components/ChartsSection';
 import { TransactionList } from './components/TransactionList';
 import { TransactionModal } from './components/TransactionModal';
 import { UpcomingBills } from './components/UpcomingBills';
@@ -11,6 +11,8 @@ import { CategoryPieChart } from './components/CategoryPieChart';
 import { CategoryManager } from './components/CategoryManager';
 import { SubscriptionsView } from './components/SubscriptionsView';
 import { ExpenseHeatmap } from './components/ExpenseHeatmap';
+import { BalanceTrendChart } from './components/BalanceTrendChart';
+import { BudgetProgress } from './components/BudgetProgress';
 import { AuthPage } from './components/AuthPage';
 import { Transaction } from './types';
 import { isSupabaseConfigured } from './lib/supabase';
@@ -50,7 +52,7 @@ const DashboardContent = () => {
   };
 
   return (
-    <div className="space-y-4 animate-in fade-in duration-500">
+    <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex items-center justify-between space-y-2">
         <h2 className="text-3xl font-bold tracking-tight">Painel</h2>
         <div className="flex items-center space-x-2">
@@ -76,7 +78,7 @@ const DashboardContent = () => {
         )
       )}
 
-      {/* Summary Cards */}
+      {/* 1. Summary Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -126,21 +128,33 @@ const DashboardContent = () => {
         </Card>
       </div>
 
-      {/* Expense Heatmap */}
-      <ExpenseHeatmap />
-
-      {/* Charts & Widgets */}
+      {/* 2. Charts Section: Bar Chart & Pie Chart */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-        <div className="col-span-4 lg:col-span-5">
-           <ChartsSection /> 
+        <div className="col-span-1 lg:col-span-4">
+           <IncomeExpenseChart /> 
         </div>
-        <div className="col-span-4 lg:col-span-2 space-y-4">
+        <div className="col-span-1 lg:col-span-3">
            <CategoryPieChart />
-           <UpcomingBills />
         </div>
       </div>
 
-      {/* Recent Transactions */}
+      {/* 3. Trends & Intensity: Balance Trend & Heatmap */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <BalanceTrendChart />
+        <ExpenseHeatmap />
+      </div>
+
+      {/* 4. Planning: Budgets & Upcoming Bills */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+         <div className="col-span-1 lg:col-span-2">
+           <BudgetProgress />
+         </div>
+         <div className="col-span-1">
+           <UpcomingBills />
+         </div>
+      </div>
+
+      {/* 5. Recent Transactions */}
       <TransactionList onEdit={handleOpenEdit} />
 
       {/* Modal */}
