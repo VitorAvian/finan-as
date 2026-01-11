@@ -1,0 +1,5 @@
+{
+  "name": "FinDash - Finanças Pessoais",
+  "description": "Um painel de finanças pessoais moderno e minimalista com controle de receitas/despesas, visualização de dados com Recharts e armazenamento local persistente.",
+  "requestFramePermissions": []
+}
