@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, Wallet, TrendingUp, TrendingDown, Plus, Moon, Sun, DollarSign, Loader2, Settings, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, Wallet, TrendingUp, TrendingDown, Plus, Moon, Sun, DollarSign, Loader2, Settings, RefreshCw, LogOut } from 'lucide-react';
 import { TransactionProvider, useTransactions } from './context/TransactionContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, Button } from './components/ui/Components';
 import { ChartsSection } from './components/ChartsSection';
 import { TransactionList } from './components/TransactionList';
@@ -10,6 +11,7 @@ import { CategoryPieChart } from './components/CategoryPieChart';
 import { CategoryManager } from './components/CategoryManager';
 import { SubscriptionsView } from './components/SubscriptionsView';
 import { ExpenseHeatmap } from './components/ExpenseHeatmap';
+import { AuthPage } from './components/AuthPage';
 import { Transaction } from './types';
 import { isSupabaseConfigured } from './lib/supabase';
 
@@ -63,7 +65,7 @@ const DashboardContent = () => {
         </div>
       </div>
       
-      {/* Error Rendering Logic: Handles both String errors and React Node (Popup) errors */}
+      {/* Error Rendering Logic */}
       {error && (
         typeof error === 'string' ? (
            <div className="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
@@ -160,79 +162,70 @@ interface NavbarProps {
   onChangeView: (view: string) => void;
 }
 
-const Navbar = ({ toggleTheme, isDark, onOpenSettings, currentView, onChangeView }: NavbarProps) => (
-  <div className="border-b border-border bg-card sticky top-0 z-10">
-    <div className="flex h-16 items-center px-4 md:px-8">
-      <div className="flex items-center gap-2 font-bold text-xl text-primary cursor-pointer" onClick={() => onChangeView('dashboard')}>
-        <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center">
-          <LayoutDashboard className="h-5 w-5" />
+const Navbar = ({ toggleTheme, isDark, onOpenSettings, currentView, onChangeView }: NavbarProps) => {
+  const { signOut, user } = useAuth();
+  
+  return (
+    <div className="border-b border-border bg-card sticky top-0 z-10">
+      <div className="flex h-16 items-center px-4 md:px-8">
+        <div className="flex items-center gap-2 font-bold text-xl text-primary cursor-pointer" onClick={() => onChangeView('dashboard')}>
+          <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center">
+            <LayoutDashboard className="h-5 w-5" />
+          </div>
+          FinDash
         </div>
-        FinDash
-      </div>
 
-      {/* Navigation Links */}
-      <div className="ml-8 hidden md:flex items-center space-x-4">
-        <Button 
-          variant={currentView === 'dashboard' ? 'default' : 'ghost'} 
-          size="sm"
-          onClick={() => onChangeView('dashboard')}
-        >
-          Painel
-        </Button>
-        <Button 
-          variant={currentView === 'subscriptions' ? 'default' : 'ghost'} 
-          size="sm"
-          onClick={() => onChangeView('subscriptions')}
-        >
-          <RefreshCw className="h-3 w-3 mr-2" />
-          Assinaturas
-        </Button>
-      </div>
+        {/* Navigation Links */}
+        <div className="ml-8 hidden md:flex items-center space-x-4">
+          <Button 
+            variant={currentView === 'dashboard' ? 'default' : 'ghost'} 
+            size="sm"
+            onClick={() => onChangeView('dashboard')}
+          >
+            Painel
+          </Button>
+          <Button 
+            variant={currentView === 'subscriptions' ? 'default' : 'ghost'} 
+            size="sm"
+            onClick={() => onChangeView('subscriptions')}
+          >
+            <RefreshCw className="h-3 w-3 mr-2" />
+            Assinaturas
+          </Button>
+        </div>
 
-      <div className="ml-auto flex items-center space-x-2 md:space-x-4">
-        {/* Mobile Nav Icons (Visible only on small screens) */}
-         <div className="md:hidden flex">
-            <Button variant="ghost" size="icon" onClick={() => onChangeView(currentView === 'dashboard' ? 'subscriptions' : 'dashboard')}>
-              {currentView === 'dashboard' ? <RefreshCw className="h-5 w-5" /> : <LayoutDashboard className="h-5 w-5" />}
-            </Button>
-         </div>
+        <div className="ml-auto flex items-center space-x-2 md:space-x-4">
+          {/* Mobile Nav Icons */}
+          <div className="md:hidden flex">
+              <Button variant="ghost" size="icon" onClick={() => onChangeView(currentView === 'dashboard' ? 'subscriptions' : 'dashboard')}>
+                {currentView === 'dashboard' ? <RefreshCw className="h-5 w-5" /> : <LayoutDashboard className="h-5 w-5" />}
+              </Button>
+          </div>
 
-        <Button variant="ghost" size="sm" onClick={onOpenSettings}>
-          <Settings className="h-4 w-4 md:mr-2" />
-          <span className="hidden md:inline">Categorias</span>
-        </Button>
-        <Button variant="ghost" size="icon" onClick={toggleTheme}>
-          {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-        </Button>
+          <Button variant="ghost" size="sm" onClick={onOpenSettings}>
+            <Settings className="h-4 w-4 md:mr-2" />
+            <span className="hidden md:inline">Categorias</span>
+          </Button>
+          <Button variant="ghost" size="icon" onClick={toggleTheme}>
+            {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+          </Button>
+          
+          <div className="h-6 w-px bg-border mx-2" />
+          
+          <Button variant="ghost" size="icon" onClick={signOut} title="Sair">
+             <LogOut className="h-5 w-5 text-destructive" />
+          </Button>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
-export default function App() {
+const AuthenticatedApp = () => {
   const [isDark, setIsDark] = useState(true);
   const [isCategoryManagerOpen, setCategoryManagerOpen] = useState(false);
   const [currentView, setCurrentView] = useState('dashboard');
-
-  // Wrap content to use Context
-  const MainContent = () => {
-     const { isLoading } = useTransactions();
-
-     if (isLoading) {
-      return (
-        <div className="flex h-[calc(100vh-64px)] w-full items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <span className="ml-2 text-lg text-muted-foreground">Carregando...</span>
-        </div>
-      );
-    }
-
-    return (
-      <main className="flex-1 p-4 md:p-8 pt-6">
-        {currentView === 'dashboard' ? <DashboardContent /> : <SubscriptionsView />}
-      </main>
-    );
-  };
+  const { user, loading } = useAuth();
 
   const toggleTheme = () => {
     const html = document.documentElement;
@@ -243,6 +236,49 @@ export default function App() {
     }
     setIsDark(!isDark);
   };
+
+  // 1. Loading State
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  // 2. Unauthenticated State
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-background text-foreground transition-colors duration-300">
+        <div className="absolute top-4 right-4 z-50">
+           <Button variant="ghost" size="icon" onClick={toggleTheme}>
+            {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+          </Button>
+        </div>
+        <AuthPage />
+      </div>
+    );
+  }
+
+  // 3. Authenticated State
+  const MainContent = () => {
+    const { isLoading } = useTransactions();
+
+    if (isLoading) {
+     return (
+       <div className="flex h-[calc(100vh-64px)] w-full items-center justify-center">
+         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+         <span className="ml-2 text-lg text-muted-foreground">Carregando...</span>
+       </div>
+     );
+   }
+
+   return (
+     <main className="flex-1 p-4 md:p-8 pt-6">
+       {currentView === 'dashboard' ? <DashboardContent /> : <SubscriptionsView />}
+     </main>
+   );
+ };
 
   return (
     <TransactionProvider>
@@ -258,5 +294,13 @@ export default function App() {
         <CategoryManager isOpen={isCategoryManagerOpen} onClose={() => setCategoryManagerOpen(false)} />
       </div>
     </TransactionProvider>
+  );
+};
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AuthenticatedApp />
+    </AuthProvider>
   );
 }
