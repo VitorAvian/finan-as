@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Transaction, SummaryStats, ChartDataPoint, CategoryDataPoint, Budget, Category, CategoryItem, TransactionType } from '../types';
 import { api } from '../services/api';
+import { useAuth } from './AuthContext';
 
 interface TransactionContextType {
   transactions: Transaction[];
@@ -22,6 +23,7 @@ interface TransactionContextType {
 const TransactionContext = createContext<TransactionContextType | undefined>(undefined);
 
 export const TransactionProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
@@ -29,17 +31,24 @@ export const TransactionProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [error, setError] = useState<React.ReactNode | null>(null);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (user) {
+      loadData(user.id);
+    } else {
+      setTransactions([]);
+      setBudgets([]);
+      setCategories([]);
+      setIsLoading(false);
+    }
+  }, [user]);
 
-  const loadData = async () => {
+  const loadData = async (userId: string) => {
     try {
       setIsLoading(true);
       setError(null);
       const [txData, budgetData, catData] = await Promise.all([
-        api.fetchTransactions(),
-        api.fetchBudgets(),
-        api.fetchCategories()
+        api.fetchTransactions(userId),
+        api.fetchBudgets(userId),
+        api.fetchCategories(userId)
       ]);
       setTransactions(txData);
       setBudgets(budgetData);
@@ -55,11 +64,11 @@ export const TransactionProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const msg = err.message || JSON.stringify(err);
     console.error(`Falha ao ${action}:`, msg);
 
-    // 1. Transaction Table Missing
+    // 1. Transaction Table Missing (Create)
     if (msg.includes('relation "transactions" does not exist')) {
       setError(
         <span>
-          Tabela do banco de dados não encontrada. Por favor, execute o script SQL no seu Editor SQL do Supabase. 
+          Tabela 'transactions' não encontrada.
           <br/>
           <code>CREATE TABLE transactions ...</code>
         </span>
@@ -67,50 +76,51 @@ export const TransactionProvider: React.FC<{ children: React.ReactNode }> = ({ c
       return;
     }
 
-    // 2. Budgets Table Missing
+    // 2. Budgets Table Missing (Create)
     if (msg.includes('relation "budgets" does not exist') || msg.includes("Could not find the table 'public.budgets'")) {
-      const sql = `
-CREATE TABLE IF NOT EXISTS budgets (
-  id uuid default gen_random_uuid() primary key,
-  category text not null unique,
-  amount numeric not null,
-  created_at timestamptz default now()
-);`;
-      setError(
+      setError(<span>Tabela 'budgets' não encontrada.</span>);
+      return;
+    }
+
+    // 3. User_ID Column Missing (Migration / ALTER)
+    if ((msg.includes("column") && msg.includes("user_id")) || msg.includes("transactions_user_id_fkey")) {
+       const sql = `
+-- Execute isso no SQL Editor do Supabase para migrar suas tabelas:
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+ALTER TABLE budgets ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
+
+-- Habilitar segurança
+ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE budgets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
+
+-- Criar políticas (apenas donos veem seus dados)
+CREATE POLICY "Users can manage their own transactions" ON transactions FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Users can manage their own budgets" ON budgets FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Users can manage their own categories" ON categories FOR ALL USING (auth.uid() = user_id);
+`;
+       setError(
         <div className="space-y-2 text-left">
-          <p className="font-bold">Tabela de Orçamentos Ausente</p>
-          <pre className="bg-black/80 text-white p-3 rounded text-xs font-mono overflow-x-auto select-all">{sql}</pre>
+          <p className="font-bold">Atualização Necessária (Migração)</p>
+          <p className="text-sm text-muted-foreground">Suas tabelas existem, mas precisam ser vinculadas aos usuários.</p>
+          <pre className="bg-black/80 text-white p-3 rounded text-xs font-mono overflow-x-auto select-all whitespace-pre-wrap">{sql}</pre>
         </div>
       );
       return;
     }
 
-    // 3. Categories Table Missing
-    if (msg.includes('relation "categories" does not exist') || msg.includes("Could not find the table 'public.categories'")) {
-      const sql = `
-CREATE TABLE IF NOT EXISTS categories (
-  id uuid default gen_random_uuid() primary key,
-  name text not null unique,
-  color text,
-  type text default 'expense',
-  created_at timestamptz default now()
-);`;
-      setError(
-        <div className="space-y-2 text-left">
-          <p className="font-bold">Tabela de Categorias Ausente</p>
-          <pre className="bg-black/80 text-white p-3 rounded text-xs font-mono overflow-x-auto select-all">{sql}</pre>
-        </div>
-      );
-      return;
-    }
-
-    // 4. Transaction Column Missing
+    // 4. Other Columns Missing (Recurring/Frequency)
     if ((msg.includes("Could not find the") && msg.includes("column")) || (msg.includes("column") && msg.includes("does not exist"))) {
-      const sql = `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN DEFAULT false;\nALTER TABLE transactions ADD COLUMN IF NOT EXISTS frequency TEXT;`;
+      const sql = `
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN DEFAULT false;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS frequency TEXT;
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'expense';
+`;
       setError(
         <div className="space-y-2 text-left">
-          <p className="font-bold">Atualização do Esquema de Banco de Dados Necessária</p>
-          <pre className="bg-black/80 text-white p-3 rounded text-xs font-mono overflow-x-auto select-all">{sql}</pre>
+          <p className="font-bold">Colunas Faltando</p>
+          <pre className="bg-black/80 text-white p-3 rounded text-xs font-mono overflow-x-auto select-all whitespace-pre-wrap">{sql}</pre>
         </div>
       );
       return;
@@ -120,9 +130,10 @@ CREATE TABLE IF NOT EXISTS categories (
   };
 
   const addTransaction = async (data: Omit<Transaction, 'id' | 'createdAt'>) => {
+    if (!user) return;
     try {
       setError(null);
-      const newTransaction = await api.createTransaction(data);
+      const newTransaction = await api.createTransaction(user.id, data);
       setTransactions(prev => [newTransaction, ...prev]);
     } catch (err: any) {
       handleDbError(err, "adicionar transação");
@@ -130,38 +141,27 @@ CREATE TABLE IF NOT EXISTS categories (
   };
 
   const deleteTransaction = async (id: string): Promise<boolean> => {
-    // 1. Snapshot previous state for rollback
+    if (!user) return false;
     const previousTransactions = [...transactions];
     const cleanId = id.trim();
 
-    // 2. Optimistic Update: Remove immediately from UI
     setTransactions(prev => prev.filter(t => t.id !== cleanId));
 
     try {
-      // 3. API Call
-      await api.deleteTransaction(cleanId);
+      await api.deleteTransaction(user.id, cleanId);
       return true;
-      
     } catch (err: any) {
-      // 5. ERROR: Rollback UI and show error
       console.error("Context: Falha ao deletar transação:", err);
-      setTransactions(previousTransactions); // Rollback visual
+      setTransactions(previousTransactions); 
 
       const errorMessage = err.message || "Erro desconhecido";
       
-      // Check for our custom flag "DELETE_BLOCKED_BY_RLS" or standard Supabase RLS messages
       if (errorMessage === "DELETE_BLOCKED_BY_RLS" || errorMessage.includes("policy") || errorMessage.includes("permission denied")) {
         const sqlFix = `
--- Execute no SQL Editor do Supabase para corrigir a exclusão
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
-
--- Remove políticas antigas que possam estar bloqueando
-DROP POLICY IF EXISTS "Public Access" ON transactions;
-DROP POLICY IF EXISTS "Public Access Transactions" ON transactions;
-DROP POLICY IF EXISTS "Enable delete for anon" ON transactions;
-
--- Cria uma política permissiva para API Anônima
-CREATE POLICY "Public Access Transactions" ON transactions FOR ALL USING (true);`;
+DROP POLICY IF EXISTS "Users can manage their own transactions" ON transactions;
+CREATE POLICY "Users can manage their own transactions" 
+ON transactions FOR ALL USING (auth.uid() = user_id);`;
         
         setError(
           <div className="fixed bottom-4 right-4 z-[9999] max-w-md bg-card border-2 border-destructive rounded-lg shadow-2xl p-4 animate-in slide-in-from-right">
@@ -172,18 +172,14 @@ CREATE POLICY "Public Access Transactions" ON transactions FOR ALL USING (true);
                 <button onClick={() => setError(null)} className="text-muted-foreground hover:text-foreground">✕</button>
              </div>
              <p className="text-sm text-foreground mb-2">
-               O Supabase impediu a exclusão desta transação. Isso acontece quando as permissões (RLS) não estão configuradas para permitir "DELETE".
+               O banco de dados impediu a exclusão. Verifique suas políticas RLS.
              </p>
-             <div className="space-y-1">
-               <p className="text-xs font-semibold">COPIE E RODE NO SQL EDITOR:</p>
-               <pre className="bg-black/90 text-green-400 p-3 rounded text-[10px] font-mono overflow-x-auto select-all border border-white/10 whitespace-pre-wrap">
+             <pre className="bg-black/90 text-green-400 p-3 rounded text-[10px] font-mono overflow-x-auto select-all border border-white/10 whitespace-pre-wrap">
                   {sqlFix}
-               </pre>
-             </div>
+             </pre>
           </div>
         );
       } else {
-        // Generic error fallback
         setError(`Falha ao deletar: ${errorMessage}`);
       }
       return false;
@@ -191,9 +187,10 @@ CREATE POLICY "Public Access Transactions" ON transactions FOR ALL USING (true);
   };
 
   const updateTransaction = async (id: string, updated: Omit<Transaction, 'id' | 'createdAt'>) => {
+    if (!user) return;
     try {
       setError(null);
-      const updatedTx = await api.updateTransaction(id, updated);
+      const updatedTx = await api.updateTransaction(user.id, id, updated);
       setTransactions(prev => prev.map(t => t.id === id ? updatedTx : t));
     } catch (err: any) {
       handleDbError(err, "atualizar transação");
@@ -201,9 +198,10 @@ CREATE POLICY "Public Access Transactions" ON transactions FOR ALL USING (true);
   };
 
   const saveBudget = async (category: Category, amount: number) => {
+    if (!user) return;
     try {
       setError(null);
-      const savedBudget = await api.upsertBudget(category, amount);
+      const savedBudget = await api.upsertBudget(user.id, category, amount);
       setBudgets(prev => {
         const index = prev.findIndex(b => b.category === category);
         if (index >= 0) {
@@ -219,9 +217,10 @@ CREATE POLICY "Public Access Transactions" ON transactions FOR ALL USING (true);
   };
 
   const addCategory = async (name: string, type: TransactionType, color: string) => {
+    if (!user) return;
     try {
       setError(null);
-      const newCat = await api.addCategory(name, type, color);
+      const newCat = await api.addCategory(user.id, name, type, color);
       setCategories(prev => [...prev, newCat]);
     } catch (err: any) {
       handleDbError(err, "adicionar categoria");
@@ -229,8 +228,9 @@ CREATE POLICY "Public Access Transactions" ON transactions FOR ALL USING (true);
   };
 
   const deleteCategory = async (id: string) => {
+    if (!user) return;
     try {
-      await api.deleteCategory(id);
+      await api.deleteCategory(user.id, id);
       setCategories(prev => prev.filter(c => c.id !== id));
     } catch (err: any) {
       console.error("Falha ao deletar categoria:", err);

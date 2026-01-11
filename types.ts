@@ -8,11 +8,13 @@ export interface CategoryItem {
   id: string;
   name: string;
   color: string;
-  type: TransactionType; // Added to differentiate in UI lists
+  type: TransactionType;
+  userId?: string; // Added for multi-tenancy
 }
 
 export interface Transaction {
   id: string;
+  userId?: string; // Added for multi-tenancy
   description: string;
   amount: number;
   type: TransactionType;
@@ -24,6 +26,8 @@ export interface Transaction {
 }
 
 export interface Budget {
+  id?: string; // Added id for consistency
+  userId?: string; // Added for multi-tenancy
   category: Category;
   amount: number;
 }

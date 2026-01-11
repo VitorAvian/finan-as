@@ -3,16 +3,15 @@ import { Transaction, Budget, Category, CategoryItem, TransactionType } from '..
 
 /**
  * Service Layer
+ * Now supports Multi-tenancy by accepting userId
  */
 
-const LOCAL_STORAGE_KEY = 'finDash_transactions';
-const BUDGET_STORAGE_KEY = 'finDash_budgets';
-const CATEGORY_STORAGE_KEY = 'finDash_categories';
+const getStorageKey = (userId: string, key: string) => `finDash_${userId}_${key}`;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Default Categories to Seed (Translated)
-const DEFAULT_CATEGORIES: Omit<CategoryItem, 'id'>[] = [
+const DEFAULT_CATEGORIES: Omit<CategoryItem, 'id' | 'userId'>[] = [
   { name: 'Salário', color: '#10b981', type: 'income' },
   { name: 'Freelance', color: '#34d399', type: 'income' },
   { name: 'Moradia', color: '#3b82f6', type: 'expense' },
@@ -26,11 +25,12 @@ const DEFAULT_CATEGORIES: Omit<CategoryItem, 'id'>[] = [
 
 export const api = {
   
-  async fetchTransactions(): Promise<Transaction[]> {
+  async fetchTransactions(userId: string): Promise<Transaction[]> {
     if (isSupabaseConfigured()) {
       const { data, error } = await supabase
         .from('transactions')
         .select('*')
+        .eq('user_id', userId) // Filter by user
         .order('date', { ascending: false });
 
       if (error) {
@@ -40,6 +40,7 @@ export const api = {
       
       return data.map((t: any) => ({
         id: t.id,
+        userId: t.user_id,
         description: t.description,
         amount: Number(t.amount),
         type: t.type,
@@ -51,16 +52,17 @@ export const api = {
       }));
     } else {
       await delay(500); 
-      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const stored = localStorage.getItem(getStorageKey(userId, 'transactions'));
       return stored ? JSON.parse(stored) : [];
     }
   },
 
-  async createTransaction(transaction: Omit<Transaction, 'id' | 'createdAt'>): Promise<Transaction> {
+  async createTransaction(userId: string, transaction: Omit<Transaction, 'id' | 'createdAt' | 'userId'>): Promise<Transaction> {
     if (isSupabaseConfigured()) {
       const { data, error } = await supabase
         .from('transactions')
         .insert([{
+          user_id: userId, // Associate with user
           description: transaction.description,
           amount: transaction.amount,
           type: transaction.type,
@@ -76,6 +78,7 @@ export const api = {
       
       return {
         id: data.id,
+        userId: data.user_id,
         description: data.description,
         amount: Number(data.amount),
         type: data.type,
@@ -90,21 +93,23 @@ export const api = {
       const newTransaction: Transaction = {
         ...transaction,
         id: crypto.randomUUID(),
+        userId: userId,
         createdAt: Date.now(),
         isRecurring: transaction.isRecurring || false,
         frequency: transaction.frequency
       };
       
-      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const key = getStorageKey(userId, 'transactions');
+      const stored = localStorage.getItem(key);
       const transactions = stored ? JSON.parse(stored) : [];
       const updated = [newTransaction, ...transactions];
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+      localStorage.setItem(key, JSON.stringify(updated));
       
       return newTransaction;
     }
   },
 
-  async updateTransaction(id: string, updates: Omit<Transaction, 'id' | 'createdAt'>): Promise<Transaction> {
+  async updateTransaction(userId: string, id: string, updates: Omit<Transaction, 'id' | 'createdAt' | 'userId'>): Promise<Transaction> {
     if (isSupabaseConfigured()) {
       const { data, error } = await supabase
         .from('transactions')
@@ -118,6 +123,7 @@ export const api = {
           frequency: updates.frequency || null
         })
         .eq('id', id)
+        .eq('user_id', userId) // Ensure ownership
         .select()
         .single();
 
@@ -125,6 +131,7 @@ export const api = {
 
       return {
         id: data.id,
+        userId: data.user_id,
         description: data.description,
         amount: Number(data.amount),
         type: data.type,
@@ -136,191 +143,212 @@ export const api = {
       };
     } else {
       await delay(300);
-      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const key = getStorageKey(userId, 'transactions');
+      const stored = localStorage.getItem(key);
       let transactions: Transaction[] = stored ? JSON.parse(stored) : [];
       
       let updatedTransaction: Transaction | null = null;
       
       transactions = transactions.map(t => {
         if (t.id === id) {
-          updatedTransaction = { ...t, ...updates };
+          updatedTransaction = { ...t, ...updates, userId }; // Ensure userId stays
           return updatedTransaction;
         }
         return t;
       });
       
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(transactions));
+      localStorage.setItem(key, JSON.stringify(transactions));
       
       if (!updatedTransaction) throw new Error("Transação não encontrada");
       return updatedTransaction;
     }
   },
 
-  async deleteTransaction(id: string): Promise<void> {
+  async deleteTransaction(userId: string, id: string): Promise<void> {
     if (isSupabaseConfigured()) {
       // 1. Validate ID
       if (!id || typeof id !== 'string') {
-        console.error("[API] ID inválido para exclusão:", id);
         throw new Error("ID inválido fornecido para deletar transação.");
       }
 
-      console.log(`[API] Enviando DELETE para transação ID: ${id}`);
-      
-      // 2. Execute Delete with 'exact' count
+      // 2. Execute Delete with 'exact' count and check user ownership
       const { error, count } = await supabase
         .from('transactions')
         .delete({ count: 'exact' })
-        .eq('id', id);
+        .eq('id', id)
+        .eq('user_id', userId); // Crucial for security
 
       // 3. Handle Errors
-      if (error) {
-        console.error("[API] Erro ao deletar no Supabase:", error);
-        throw new Error(error.message);
-      }
+      if (error) throw new Error(error.message);
 
-      console.log(`[API] Delete processado. Linhas afetadas: ${count}`);
-
-      // 4. Handle Silent RLS Failures (Count 0)
+      // 4. Handle Silent Failures (Count 0)
       if (count === null || count === 0) {
-        console.warn("[API] Aviso: Nenhuma linha foi deletada. Isso indica ID inexistente ou Bloqueio RLS.");
-        throw new Error("DELETE_BLOCKED_BY_RLS");
+        // Might happen if ID doesn't exist OR if RLS/UserId check failed
+        // We throw the specific RLS code if likely
+        console.warn("[API] Delete count 0. Item not found or RLS blocked.");
+        throw new Error("DELETE_BLOCKED_BY_RLS"); 
       }
       
     } else {
       await delay(300);
-      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+      const key = getStorageKey(userId, 'transactions');
+      const stored = localStorage.getItem(key);
       let transactions: Transaction[] = stored ? JSON.parse(stored) : [];
       const initialLength = transactions.length;
       transactions = transactions.filter(t => t.id !== id);
       
-      if (transactions.length === initialLength) {
-         console.warn("Tentativa de deletar item inexistente no LocalStorage");
-      }
-      
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(transactions));
+      localStorage.setItem(key, JSON.stringify(transactions));
     }
   },
 
   // --- BUDGETS API ---
 
-  async fetchBudgets(): Promise<Budget[]> {
+  async fetchBudgets(userId: string): Promise<Budget[]> {
     if (isSupabaseConfigured()) {
       const { data, error } = await supabase
         .from('budgets')
-        .select('*');
+        .select('*')
+        .eq('user_id', userId);
 
       if (error) {
          throw new Error(error.message);
       }
 
       return data.map((b: any) => ({
+        id: b.id,
+        userId: b.user_id,
         category: b.category,
         amount: Number(b.amount)
       }));
     } else {
       await delay(300);
-      const stored = localStorage.getItem(BUDGET_STORAGE_KEY);
+      const stored = localStorage.getItem(getStorageKey(userId, 'budgets'));
       return stored ? JSON.parse(stored) : [];
     }
   },
 
-  async upsertBudget(category: Category, amount: number): Promise<Budget> {
+  async upsertBudget(userId: string, category: Category, amount: number): Promise<Budget> {
     if (isSupabaseConfigured()) {
+      // Note: Supabase upsert requires a unique constraint on (user_id, category)
       const { data, error } = await supabase
         .from('budgets')
-        .upsert({ category, amount }, { onConflict: 'category' })
+        .upsert(
+          { user_id: userId, category, amount }, 
+          { onConflict: 'user_id,category' } // Requires SQL constraint
+        )
         .select()
         .single();
 
       if (error) throw error;
-      return { category: data.category, amount: Number(data.amount) };
+      return { id: data.id, userId: data.user_id, category: data.category, amount: Number(data.amount) };
     } else {
       await delay(300);
-      const stored = localStorage.getItem(BUDGET_STORAGE_KEY);
+      const key = getStorageKey(userId, 'budgets');
+      const stored = localStorage.getItem(key);
       let budgets: Budget[] = stored ? JSON.parse(stored) : [];
       
       const existingIndex = budgets.findIndex(b => b.category === category);
       if (existingIndex >= 0) {
         budgets[existingIndex].amount = amount;
       } else {
-        budgets.push({ category, amount });
+        budgets.push({ userId, category, amount });
       }
       
-      localStorage.setItem(BUDGET_STORAGE_KEY, JSON.stringify(budgets));
-      return { category, amount };
+      localStorage.setItem(key, JSON.stringify(budgets));
+      return { userId, category, amount };
     }
   },
 
   // --- CATEGORIES API ---
 
-  async fetchCategories(): Promise<CategoryItem[]> {
+  async fetchCategories(userId: string): Promise<CategoryItem[]> {
     if (isSupabaseConfigured()) {
-      const { data, error } = await supabase.from('categories').select('*');
+      const { data, error } = await supabase
+        .from('categories')
+        .select('*')
+        .eq('user_id', userId);
       
       if (error) throw new Error(error.message);
 
-      // If empty, seed defaults
+      // If empty for this user, seed defaults for THIS user
       if (!data || data.length === 0) {
+        const categoriesToInsert = DEFAULT_CATEGORIES.map(c => ({
+          ...c,
+          user_id: userId
+        }));
+
         const { data: seeded, error: seedError } = await supabase
           .from('categories')
-          .insert(DEFAULT_CATEGORIES)
+          .insert(categoriesToInsert)
           .select();
           
         if (seedError) throw seedError;
-        return seeded;
+        return seeded.map((c: any) => ({ ...c, userId: c.user_id }));
       }
 
-      return data;
+      return data.map((c: any) => ({ ...c, userId: c.user_id }));
     } else {
       await delay(300);
-      const stored = localStorage.getItem(CATEGORY_STORAGE_KEY);
+      const key = getStorageKey(userId, 'categories');
+      const stored = localStorage.getItem(key);
       if (!stored) {
-        // Seed local storage
-        const defaults = DEFAULT_CATEGORIES.map(c => ({ ...c, id: crypto.randomUUID() }));
-        localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(defaults));
+        // Seed local storage for this user
+        const defaults = DEFAULT_CATEGORIES.map(c => ({ 
+          ...c, 
+          id: crypto.randomUUID(),
+          userId 
+        }));
+        localStorage.setItem(key, JSON.stringify(defaults));
         return defaults as CategoryItem[];
       }
       return JSON.parse(stored);
     }
   },
 
-  async addCategory(name: string, type: TransactionType, color: string): Promise<CategoryItem> {
+  async addCategory(userId: string, name: string, type: TransactionType, color: string): Promise<CategoryItem> {
     if (isSupabaseConfigured()) {
       const { data, error } = await supabase
         .from('categories')
-        .insert([{ name, type, color }])
+        .insert([{ user_id: userId, name, type, color }])
         .select()
         .single();
       if (error) throw error;
-      return data;
+      return { ...data, userId: data.user_id };
     } else {
       await delay(300);
-      const stored = localStorage.getItem(CATEGORY_STORAGE_KEY);
+      const key = getStorageKey(userId, 'categories');
+      const stored = localStorage.getItem(key);
       const categories: CategoryItem[] = stored ? JSON.parse(stored) : [];
       
       const newItem: CategoryItem = {
         id: crypto.randomUUID(),
+        userId,
         name,
         type,
         color
       };
       
       categories.push(newItem);
-      localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(categories));
+      localStorage.setItem(key, JSON.stringify(categories));
       return newItem;
     }
   },
 
-  async deleteCategory(id: string): Promise<void> {
+  async deleteCategory(userId: string, id: string): Promise<void> {
     if (isSupabaseConfigured()) {
-      const { error } = await supabase.from('categories').delete().eq('id', id);
+      const { error } = await supabase
+        .from('categories')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', userId);
       if (error) throw error;
     } else {
       await delay(300);
-      const stored = localStorage.getItem(CATEGORY_STORAGE_KEY);
+      const key = getStorageKey(userId, 'categories');
+      const stored = localStorage.getItem(key);
       const categories: CategoryItem[] = stored ? JSON.parse(stored) : [];
       const filtered = categories.filter(c => c.id !== id);
-      localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(filtered));
+      localStorage.setItem(key, JSON.stringify(filtered));
     }
   }
 };
