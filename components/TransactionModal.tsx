@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Trash2, Loader2 } from 'lucide-react';
+import { X, Trash2, Loader2, Zap } from 'lucide-react';
 import { Button, Input, Label, Select, Checkbox } from './ui/Components';
 import { Transaction, Category, TransactionType } from '../types';
 import { useTransactions } from '../context/TransactionContext';
@@ -11,8 +11,32 @@ interface TransactionModalProps {
   initialData?: Transaction | null;
 }
 
+// --- Smart Categorization Hook ---
+const useSmartCategory = (transactions: Transaction[]) => {
+  const predict = (description: string) => {
+    if (!description || description.length < 3) return null;
+    
+    const lowerDesc = description.toLowerCase();
+    
+    // Find the most recent transaction that includes the description text
+    // Assuming transactions are sorted by date desc in context
+    const match = transactions.find(t => 
+      t.description.toLowerCase().includes(lowerDesc)
+    );
+
+    if (match) {
+      return { category: match.category, type: match.type };
+    }
+    return null;
+  };
+
+  return predict;
+};
+
 export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onClose, onSave, initialData }) => {
-  const { categories, deleteTransaction } = useTransactions();
+  const { categories, transactions, deleteTransaction } = useTransactions();
+  const predictCategory = useSmartCategory(transactions);
+
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [type, setType] = useState<TransactionType>('expense');
@@ -22,6 +46,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onCl
   const [frequency, setFrequency] = useState<'weekly' | 'monthly'>('monthly');
   
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isAutoFilled, setIsAutoFilled] = useState(false);
 
   // Filter categories based on selected type
   const availableCategories = categories.filter(c => c.type === type);
@@ -35,16 +60,27 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onCl
       setDate(initialData.date);
       setIsRecurring(!!initialData.isRecurring);
       setFrequency(initialData.frequency || 'monthly');
+      setIsAutoFilled(false);
     } else {
       resetForm();
     }
   }, [initialData, isOpen]);
 
   // When type changes, ensure valid category is selected
+  // But ONLY if not auto-filled recently or if current category is invalid for new type
   useEffect(() => {
     if (isOpen && !initialData) {
-       const firstMatch = categories.find(c => c.type === type);
-       if (firstMatch) setCategory(firstMatch.name);
+       // Check if current category belongs to new type
+       const isValid = categories.find(c => c.name === category && c.type === type);
+       
+       if (!isValid) {
+         const firstMatch = categories.find(c => c.type === type);
+         if (firstMatch) {
+            setCategory(firstMatch.name);
+            // If we had to switch category because of type change, likely auto-fill is invalid
+            setIsAutoFilled(false); 
+         }
+       }
     }
   }, [type, isOpen, categories, initialData]);
 
@@ -57,6 +93,26 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onCl
     setDate(new Date().toISOString().split('T')[0]);
     setIsRecurring(false);
     setFrequency('monthly');
+    setIsAutoFilled(false);
+  };
+
+  const handleDescriptionBlur = () => {
+    // Only auto-categorize if adding new transaction
+    if (initialData || !description) return;
+
+    const prediction = predictCategory(description);
+    
+    if (prediction) {
+      // Apply prediction
+      setType(prediction.type);
+      setCategory(prediction.category);
+      setIsAutoFilled(true);
+    }
+  };
+
+  const handleManualCategoryChange = (newCategory: Category) => {
+    setCategory(newCategory);
+    setIsAutoFilled(false); // Remove "Suggested" badge if user manually overrides
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -94,7 +150,6 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onCl
             if (success) {
                onClose(); 
             } else {
-               // If failed (e.g. RLS error), stop spinner but keep modal open so user sees error
                setIsDeleting(false);
             }
         } catch (error) {
@@ -125,7 +180,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onCl
               <Button
                 type="button"
                 variant={type === 'income' ? 'default' : 'outline'}
-                onClick={() => setType('income')}
+                onClick={() => { setType('income'); setIsAutoFilled(false); }}
                 className={type === 'income' ? 'bg-green-600 hover:bg-green-700 text-white' : ''}
               >
                 Receita
@@ -133,7 +188,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onCl
               <Button
                 type="button"
                 variant={type === 'expense' ? 'default' : 'outline'}
-                onClick={() => setType('expense')}
+                onClick={() => { setType('expense'); setIsAutoFilled(false); }}
                 className={type === 'expense' ? 'bg-red-600 hover:bg-red-700 text-white' : ''}
               >
                 Despesa
@@ -161,16 +216,24 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onCl
               placeholder="ex: Compras do mês"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+              onBlur={handleDescriptionBlur}
               required
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="category">Categoria</Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="category">Categoria</Label>
+              {isAutoFilled && (
+                <span className="text-xs text-yellow-600 dark:text-yellow-400 flex items-center gap-1 animate-in fade-in bg-yellow-100 dark:bg-yellow-900/30 px-2 py-0.5 rounded-full">
+                  <Zap className="h-3 w-3 fill-yellow-600 dark:fill-yellow-400" /> Sugerido
+                </span>
+              )}
+            </div>
             <Select
               id="category"
               value={category}
-              onChange={(e) => setCategory(e.target.value as Category)}
+              onChange={(e) => handleManualCategoryChange(e.target.value as Category)}
             >
                {availableCategories.length > 0 ? availableCategories.map(cat => (
                  <option key={cat.id} value={cat.name}>{cat.name}</option>
