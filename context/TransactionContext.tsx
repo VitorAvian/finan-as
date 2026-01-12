@@ -1,7 +1,20 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { Transaction, SummaryStats, ChartDataPoint, CategoryDataPoint, Budget, Category, CategoryItem, TransactionType } from '../types';
 import { api } from '../services/api';
 import { useAuth } from './AuthContext';
+
+interface MonthlyStats {
+  income: number;
+  expenses: number;
+  balance: number; // Net (Income - Expense)
+}
+
+interface FinancialReport {
+  currentMonth: MonthlyStats;
+  previousMonth: MonthlyStats;
+  totalBalance: number;
+  previousClosingBalance: number; // Balance at the end of last month
+}
 
 interface TransactionContextType {
   transactions: Transaction[];
@@ -15,7 +28,8 @@ interface TransactionContextType {
   saveBudget: (category: Category, amount: number) => Promise<void>;
   addCategory: (name: string, type: TransactionType, color: string) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
-  stats: SummaryStats;
+  stats: SummaryStats; // Kept for backward compatibility
+  financialReport: FinancialReport; // New MoM data
   monthlyData: ChartDataPoint[];
   categoryData: CategoryDataPoint[];
 }
@@ -64,68 +78,14 @@ export const TransactionProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const msg = err.message || JSON.stringify(err);
     console.error(`Falha ao ${action}:`, msg);
 
-    // 1. Transaction Table Missing (Create)
     if (msg.includes('relation "transactions" does not exist')) {
-      setError(
-        <span>
-          Tabela 'transactions' não encontrada.
-          <br/>
-          <code>CREATE TABLE transactions ...</code>
-        </span>
-      );
+      setError(<span>Tabela 'transactions' não encontrada.</span>);
       return;
     }
-
-    // 2. Budgets Table Missing (Create)
-    if (msg.includes('relation "budgets" does not exist') || msg.includes("Could not find the table 'public.budgets'")) {
+    if (msg.includes('relation "budgets" does not exist')) {
       setError(<span>Tabela 'budgets' não encontrada.</span>);
       return;
     }
-
-    // 3. User_ID Column Missing (Migration / ALTER)
-    if ((msg.includes("column") && msg.includes("user_id")) || msg.includes("transactions_user_id_fkey")) {
-       const sql = `
--- Execute isso no SQL Editor do Supabase para migrar suas tabelas:
-ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
-ALTER TABLE budgets ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
-ALTER TABLE categories ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE;
-
--- Habilitar segurança
-ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE budgets ENABLE ROW LEVEL SECURITY;
-ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
-
--- Criar políticas (apenas donos veem seus dados)
-CREATE POLICY "Users can manage their own transactions" ON transactions FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users can manage their own budgets" ON budgets FOR ALL USING (auth.uid() = user_id);
-CREATE POLICY "Users can manage their own categories" ON categories FOR ALL USING (auth.uid() = user_id);
-`;
-       setError(
-        <div className="space-y-2 text-left">
-          <p className="font-bold">Atualização Necessária (Migração)</p>
-          <p className="text-sm text-muted-foreground">Suas tabelas existem, mas precisam ser vinculadas aos usuários.</p>
-          <pre className="bg-black/80 text-white p-3 rounded text-xs font-mono overflow-x-auto select-all whitespace-pre-wrap">{sql}</pre>
-        </div>
-      );
-      return;
-    }
-
-    // 4. Other Columns Missing (Recurring/Frequency)
-    if ((msg.includes("Could not find the") && msg.includes("column")) || (msg.includes("column") && msg.includes("does not exist"))) {
-      const sql = `
-ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN DEFAULT false;
-ALTER TABLE transactions ADD COLUMN IF NOT EXISTS frequency TEXT;
-ALTER TABLE categories ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'expense';
-`;
-      setError(
-        <div className="space-y-2 text-left">
-          <p className="font-bold">Colunas Faltando</p>
-          <pre className="bg-black/80 text-white p-3 rounded text-xs font-mono overflow-x-auto select-all whitespace-pre-wrap">{sql}</pre>
-        </div>
-      );
-      return;
-    }
-
     setError(`Falha ao ${action}. ${msg}`);
   };
 
@@ -153,35 +113,7 @@ ALTER TABLE categories ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'expense';
     } catch (err: any) {
       console.error("Context: Falha ao deletar transação:", err);
       setTransactions(previousTransactions); 
-
-      const errorMessage = err.message || "Erro desconhecido";
-      
-      if (errorMessage === "DELETE_BLOCKED_BY_RLS" || errorMessage.includes("policy") || errorMessage.includes("permission denied")) {
-        const sqlFix = `
-ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Users can manage their own transactions" ON transactions;
-CREATE POLICY "Users can manage their own transactions" 
-ON transactions FOR ALL USING (auth.uid() = user_id);`;
-        
-        setError(
-          <div className="fixed bottom-4 right-4 z-[9999] max-w-md bg-card border-2 border-destructive rounded-lg shadow-2xl p-4 animate-in slide-in-from-right">
-             <div className="flex justify-between items-start mb-2">
-                <p className="font-bold text-destructive flex items-center gap-2">
-                  🚫 Ação Bloqueada pelo Banco de Dados
-                </p>
-                <button onClick={() => setError(null)} className="text-muted-foreground hover:text-foreground">✕</button>
-             </div>
-             <p className="text-sm text-foreground mb-2">
-               O banco de dados impediu a exclusão. Verifique suas políticas RLS.
-             </p>
-             <pre className="bg-black/90 text-green-400 p-3 rounded text-[10px] font-mono overflow-x-auto select-all border border-white/10 whitespace-pre-wrap">
-                  {sqlFix}
-             </pre>
-          </div>
-        );
-      } else {
-        setError(`Falha ao deletar: ${errorMessage}`);
-      }
+      setError(`Falha ao deletar: ${err.message}`);
       return false;
     }
   };
@@ -234,12 +166,13 @@ ON transactions FOR ALL USING (auth.uid() = user_id);`;
       setCategories(prev => prev.filter(c => c.id !== id));
     } catch (err: any) {
       console.error("Falha ao deletar categoria:", err);
-      alert(`Falha ao deletar categoria: ${err.message || 'Erro desconhecido'}`);
     }
   };
 
-  // Derived Statistics
-  const stats = transactions.reduce(
+  // --- Statistics Logic ---
+
+  // 1. Legacy All-Time Stats (kept for compatibility if needed, though we primarily use financialReport now)
+  const stats = useMemo(() => transactions.reduce(
     (acc, curr) => {
       if (curr.type === 'income') {
         acc.totalIncome += curr.amount;
@@ -251,7 +184,64 @@ ON transactions FOR ALL USING (auth.uid() = user_id);`;
       return acc;
     },
     { totalBalance: 0, totalIncome: 0, totalExpenses: 0 }
-  );
+  ), [transactions]);
+
+  // 2. Financial Report (MoM Comparison)
+  const financialReport = useMemo((): FinancialReport => {
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    // Setup Previous Month Date
+    const prevDate = new Date(now);
+    prevDate.setMonth(now.getMonth() - 1);
+    const prevMonth = prevDate.getMonth();
+    const prevYear = prevDate.getFullYear();
+
+    let current = { income: 0, expenses: 0, balance: 0 };
+    let previous = { income: 0, expenses: 0, balance: 0 };
+    let totalBalance = 0;
+    let previousClosingBalance = 0;
+
+    transactions.forEach(t => {
+      const [tYear, tMonth] = t.date.split('-').map(Number);
+      const txDate = new Date(tYear, tMonth - 1, 1);
+      
+      // All Time Balance Calculation
+      if (t.type === 'income') totalBalance += t.amount;
+      else totalBalance -= t.amount;
+
+      // Previous Closing Balance (All transactions strictly BEFORE current month)
+      // If transaction is in previous years OR (same year but previous months)
+      if (tYear < currentYear || (tYear === currentYear && (tMonth - 1) < currentMonth)) {
+         if (t.type === 'income') previousClosingBalance += t.amount;
+         else previousClosingBalance -= t.amount;
+      }
+
+      // Current Month Stats
+      if (tYear === currentYear && (tMonth - 1) === currentMonth) {
+        if (t.type === 'income') current.income += t.amount;
+        else current.expenses += t.amount;
+      }
+
+      // Previous Month Stats
+      if (tYear === prevYear && (tMonth - 1) === prevMonth) {
+        if (t.type === 'income') previous.income += t.amount;
+        else previous.expenses += t.amount;
+      }
+    });
+
+    current.balance = current.income - current.expenses;
+    previous.balance = previous.income - previous.expenses;
+
+    return {
+      currentMonth: current,
+      previousMonth: previous,
+      totalBalance,
+      previousClosingBalance
+    };
+  }, [transactions]);
+
 
   const getMonthlyData = (): ChartDataPoint[] => {
     const months = new Map<string, ChartDataPoint>();
@@ -305,6 +295,7 @@ ON transactions FOR ALL USING (auth.uid() = user_id);`;
       addCategory,
       deleteCategory,
       stats,
+      financialReport,
       monthlyData: getMonthlyData(),
       categoryData: getCategoryData()
     }}>

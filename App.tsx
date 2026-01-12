@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, Wallet, TrendingUp, TrendingDown, Plus, Moon, Sun, DollarSign, Loader2, Settings, RefreshCw, LogOut } from 'lucide-react';
+import { LayoutDashboard, Wallet, TrendingUp, TrendingDown, Plus, Moon, Sun, DollarSign, Loader2, Settings, RefreshCw, LogOut, BarChart3, Minus } from 'lucide-react';
 import { TransactionProvider, useTransactions } from './context/TransactionContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, Button } from './components/ui/Components';
@@ -13,16 +13,63 @@ import { SubscriptionsView } from './components/SubscriptionsView';
 import { ExpenseHeatmap } from './components/ExpenseHeatmap';
 import { BalanceTrendChart } from './components/BalanceTrendChart';
 import { BudgetProgress } from './components/BudgetProgress';
+import { CategoryTrendChart } from './components/CategoryTrendChart';
 import { AuthPage } from './components/AuthPage';
 import { Transaction } from './types';
 import { isSupabaseConfigured } from './lib/supabase';
 
+// Helper for Trend Badges
+const TrendBadge = ({ 
+  current, 
+  previous, 
+  inverse = false 
+}: { 
+  current: number; 
+  previous: number; 
+  inverse?: boolean 
+}) => {
+  if (previous === 0) {
+     return <span className="text-xs text-muted-foreground flex items-center mt-1">Sem dados anteriores</span>;
+  }
+
+  const diff = current - previous;
+  const percentage = (diff / previous) * 100;
+  const isPositive = diff >= 0;
+  
+  // Logic: 
+  // Normal (Income/Balance): Up is Good (Green), Down is Bad (Red)
+  // Inverse (Expense): Up is Bad (Red), Down is Good (Green)
+  
+  let colorClass = "";
+  let Icon = Minus;
+
+  if (isPositive) {
+    colorClass = inverse ? "text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/30" : "text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30";
+    Icon = TrendingUp;
+  } else {
+    colorClass = inverse ? "text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30" : "text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/30";
+    Icon = TrendingDown;
+  }
+
+  // Formatting
+  const sign = isPositive ? "+" : "";
+  
+  return (
+    <div className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium mt-1 ${colorClass}`}>
+      <Icon className="h-3 w-3" />
+      {sign}{percentage.toFixed(1)}%
+    </div>
+  );
+};
+
 // Dashboard Content Wrapper
 const DashboardContent = () => {
-  const { stats, addTransaction, updateTransaction, error } = useTransactions();
+  const { financialReport, addTransaction, updateTransaction, error } = useTransactions();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const { currentMonth, previousMonth, totalBalance, previousClosingBalance } = financialReport;
 
   const handleOpenAdd = () => {
     setEditingTransaction(null);
@@ -86,34 +133,46 @@ const DashboardContent = () => {
             <Wallet className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">R$ {stats.totalBalance.toFixed(2)}</div>
-            <p className="text-xs text-muted-foreground">Fundos disponíveis</p>
+            <div className="text-2xl font-bold">R$ {totalBalance.toFixed(2)}</div>
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">Fundos disponíveis</p>
+              <TrendBadge current={totalBalance} previous={previousClosingBalance} />
+            </div>
           </CardContent>
         </Card>
+        
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Receitas</CardTitle>
+            <CardTitle className="text-sm font-medium">Receitas (Mês)</CardTitle>
             <TrendingUp className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-              +R$ {stats.totalIncome.toFixed(2)}
+              +R$ {currentMonth.income.toFixed(2)}
             </div>
-            <p className="text-xs text-muted-foreground">Total recebido</p>
+            <div className="flex items-center justify-between">
+               <p className="text-xs text-muted-foreground">vs. Mês Anterior</p>
+               <TrendBadge current={currentMonth.income} previous={previousMonth.income} />
+            </div>
           </CardContent>
         </Card>
+        
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Despesas</CardTitle>
+            <CardTitle className="text-sm font-medium">Despesas (Mês)</CardTitle>
             <TrendingDown className="h-4 w-4 text-red-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-red-600 dark:text-red-400">
-              -R$ {stats.totalExpenses.toFixed(2)}
+              -R$ {currentMonth.expenses.toFixed(2)}
             </div>
-            <p className="text-xs text-muted-foreground">Total gasto</p>
+            <div className="flex items-center justify-between">
+               <p className="text-xs text-muted-foreground">vs. Mês Anterior</p>
+               <TrendBadge current={currentMonth.expenses} previous={previousMonth.expenses} inverse />
+            </div>
           </CardContent>
         </Card>
+        
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Economia Líquida</CardTitle>
@@ -121,9 +180,12 @@ const DashboardContent = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              R$ {(stats.totalIncome - stats.totalExpenses).toFixed(2)}
+              R$ {currentMonth.balance.toFixed(2)}
             </div>
-            <p className="text-xs text-muted-foreground">Receitas menos Despesas</p>
+            <div className="flex items-center justify-between">
+               <p className="text-xs text-muted-foreground">Receitas - Despesas</p>
+               <TrendBadge current={currentMonth.balance} previous={previousMonth.balance} />
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -138,13 +200,24 @@ const DashboardContent = () => {
         </div>
       </div>
 
-      {/* 3. Trends & Intensity: Balance Trend & Heatmap */}
+      {/* 3. Detailed Analysis Section (New) */}
+      <div className="space-y-4">
+         <h3 className="text-lg font-semibold flex items-center gap-2">
+            <BarChart3 className="h-5 w-5" />
+            Análise Detalhada
+         </h3>
+         <div className="grid gap-4 md:grid-cols-1">
+            <CategoryTrendChart />
+         </div>
+      </div>
+
+      {/* 4. Trends & Intensity: Balance Trend & Heatmap */}
       <div className="grid gap-4 md:grid-cols-2">
         <BalanceTrendChart />
         <ExpenseHeatmap />
       </div>
 
-      {/* 4. Planning: Budgets & Upcoming Bills */}
+      {/* 5. Planning: Budgets & Upcoming Bills */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
          <div className="col-span-1 lg:col-span-2">
            <BudgetProgress />
@@ -154,7 +227,7 @@ const DashboardContent = () => {
          </div>
       </div>
 
-      {/* 5. Recent Transactions */}
+      {/* 6. Recent Transactions */}
       <TransactionList onEdit={handleOpenEdit} />
 
       {/* Modal */}
@@ -177,7 +250,7 @@ interface NavbarProps {
 }
 
 const Navbar = ({ toggleTheme, isDark, onOpenSettings, currentView, onChangeView }: NavbarProps) => {
-  const { signOut, user } = useAuth();
+  const { signOut } = useAuth();
   
   return (
     <div className="border-b border-border bg-card sticky top-0 z-10">
