@@ -73,7 +73,7 @@ export const BalanceTrendChart: React.FC = () => {
   const isPositiveTrend = endBal >= startBal;
 
   return (
-    <Card className="col-span-4 lg:col-span-3">
+    <Card className="h-full w-full">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <TrendingUp className={`h-5 w-5 ${isPositiveTrend ? 'text-green-500' : 'text-red-500'}`} />

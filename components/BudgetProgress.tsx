@@ -83,7 +83,7 @@ export const BudgetProgress: React.FC = () => {
                Nenhum gasto ou orçamento definido para este mês.
              </div>
           ) : (
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
               {budgetStats.map((item) => (
                 <div key={item.category} className="space-y-1.5 p-3 rounded-lg border border-border/50 bg-card/50">
                   <div className="flex items-center justify-between text-sm mb-2">

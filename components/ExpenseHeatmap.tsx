@@ -79,7 +79,7 @@ export const ExpenseHeatmap: React.FC = () => {
 
   return (
     <>
-      <Card>
+      <Card className="h-full">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -99,7 +99,7 @@ export const ExpenseHeatmap: React.FC = () => {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="w-full overflow-x-auto pb-2 custom-scrollbar">
+          <div className="w-full overflow-x-auto pb-2 custom-scrollbar flex justify-center md:justify-start lg:justify-center">
             {/* GitHub Style Grid: Rows=7 (Weekdays), Cols=Dynamic */}
             <div className="grid grid-rows-7 grid-flow-col gap-1 w-max">
               {/* Render Days */}

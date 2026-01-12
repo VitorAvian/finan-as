@@ -53,7 +53,7 @@ export const UpcomingBills: React.FC = () => {
   if (upcomingBills.length === 0) return null;
 
   return (
-    <Card className="col-span-4 md:col-span-2 lg:col-span-2">
+    <Card className="h-full">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <CalendarClock className="h-5 w-5 text-orange-500" />
